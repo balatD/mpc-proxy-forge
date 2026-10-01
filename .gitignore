@@ -147,3 +147,11 @@ vite.config.ts.timestamp-*
 /upscayl/
 /orders/
 /decks/
+
+# release runtime (bundled by CI) and local tooling
+/node
+/mpc-proxy-forge
+*.command
+autofill_crash_log.txt
+.DS_Store
+.playwright-mcp/
