@@ -79,7 +79,7 @@ export function createMpcAutofillOrder(order: Order, items: CardQueueItem[], car
 
         fronts.push({
             card: {
-                id: front.path,
+                id: `cards/${front.path}`,
                 name: front.path,
                 query: undefined,
                 slots: frontSlots.join(','),
@@ -90,7 +90,7 @@ export function createMpcAutofillOrder(order: Order, items: CardQueueItem[], car
         if (!!back && backSlots.length > 0) {
             backs.push({
                 card: {
-                    id: back.path,
+                    id: `cards/${back.path}`,
                     name: back.path,
                     query: undefined,
                     slots: backSlots.join(','),
