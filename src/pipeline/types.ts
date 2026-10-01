@@ -6,9 +6,12 @@ export enum ProcessingState {
     Converted = "converted",
 }
 
+export type FinishGroup = 'foil' | 'nonfoil';
+
 export interface CardQueueItem {
     id: string,
     face: 'front' | 'back',
+    group: FinishGroup,
     scryfallUrl: string,
     path: string,
     state: ProcessingState

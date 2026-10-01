@@ -35,6 +35,7 @@ export type MoxfieldCard = MoxfieldCardPrintingData & {
 export type MoxfieldCardPrintingData = {
     quantity: number,
     card: MoxfieldCardDetails,
+    finish?: 'nonFoil' | 'foil' | 'etched',
 }
 
 export type MoxfieldCardDetails = {

@@ -1,5 +1,5 @@
-import { type DeckConfig, DeckData, type Order, saveOrder } from "../config/orderConfigManager.js";
-import { type CardQueueItem, ProcessingState, type Queue, type Queues } from "./types.js";
+import { type DeckConfig, DeckData, type FoilMode, type Order, saveOrder } from "../config/orderConfigManager.js";
+import { type CardQueueItem, type FinishGroup, ProcessingState, type Queue, type Queues } from "./types.js";
 import { delay, Listr, type ListrTask } from "listr2";
 import {
     getMoxfieldDetails,
@@ -13,10 +13,9 @@ import chalk from "chalk";
 import { downloadScryfallImage, findScryfallCard, type ScryfallCard } from "../clients/scryfall.js";
 import path from "node:path";
 import { upscaleImage } from "./upscayl.js";
-import { exists } from "../utils/fs.js";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { postProcessImage } from "./postProcessing.js";
-import { createMpcAutofillOrder } from "../output/mpcAutofill.js";
+import { createMpcAutofillOrder, finishGroup } from "../output/mpcAutofill.js";
 import sharp from "sharp";
 import { confirmDialog } from "../utils/dialog.js";
 
@@ -54,10 +53,7 @@ export async function processOrder(order: Order) {
     const processingProfile = order.profile;
 
     const mainDir = path.join(processingProfile.outputDirectory, order.name);
-    const cardsDir = path.join(mainDir, `cards`);
-    if (!await exists(cardsDir)) {
-        await mkdir(cardsDir, { recursive: true });
-    }
+    const cardsDirFor = (group: FinishGroup) => path.join(groupDir(mainDir, group, order.foilMode), 'cards');
 
     const context = createContext();
 
@@ -95,7 +91,7 @@ export async function processOrder(order: Order) {
         }
 
         const processingTasks = new Listr([
-            runImagePipeline(order, cardsDir, processingProfile),
+            runImagePipeline(order, cardsDirFor, processingProfile),
             writeMpcXml(order, mainDir)
         ]);
 
@@ -118,7 +114,7 @@ export async function processOrder(order: Order) {
     }
 }
 
-function createContext(): Context {
+export function createContext(): Context {
     return {
         decks: {},
         cards: {},
@@ -219,18 +215,31 @@ function collectCardDetails(): ListrTask {
 }
 
 
-function runImagePipeline(order: Order, cardsDir: string, profile: ProcessingProfile): ListrTask {
+function runImagePipeline(order: Order, cardsDirFor: (group: FinishGroup) => string, profile: ProcessingProfile): ListrTask {
     return {
         title: 'Processing order images',
         task: async (ctx: Context, task) => {
             if (ctx.aborted) return;
             enqueueCards(ctx, order);
-            return task.newListr(createPipelineTasks(cardsDir, profile), { concurrent: true });
+
+            const groups = new Set(Object.values(ctx.queues).flatMap((x: Queue) => x.cards).map(x => x.group));
+            for (const group of groups) {
+                await mkdir(cardsDirFor(group), { recursive: true });
+            }
+
+            return task.newListr(createPipelineTasks(cardsDirFor, profile), { concurrent: true });
         }
     };
 }
 
-function enqueueCards(ctx: Context, order: Order) {
+export function enqueueCards(ctx: Context, order: Order) {
+    const groupsByCard = new Map<string, Set<FinishGroup>>();
+    for (const card of Object.values(ctx.decks).flatMap(deck => deck.cards)) {
+        const groups = groupsByCard.get(card.card.id) ?? new Set<FinishGroup>();
+        groups.add(finishGroup(card, order.foilMode));
+        groupsByCard.set(card.card.id, groups);
+    }
+
     for (const [index, key] of Object.keys(ctx.cards).entries()) {
         const card = ctx.cards[key]!;
 
@@ -240,33 +249,41 @@ function enqueueCards(ctx: Context, order: Order) {
             return;
         }
 
-        ctx.queues[ProcessingState.NotDownloaded].cards.push({
-            id: key,
-            face: 'front',
-            scryfallUrl: frontImage,
-            path: `${key}-${index}-front.png`,
-            state: ProcessingState.NotDownloaded
-        });
-
         const backImage = card.scryfallCard.card_faces?.find(face => !!face.image_uris && face.image_uris.png.includes('/back/'))?.image_uris?.png;
-        if (backImage) {
+
+        for (const group of groupsByCard.get(key) ?? []) {
             ctx.queues[ProcessingState.NotDownloaded].cards.push({
                 id: key,
-                face: 'back',
-                scryfallUrl: backImage,
-                path: `${key}-${index}-back.png`,
+                face: 'front',
+                group,
+                scryfallUrl: frontImage,
+                path: `${key}-${index}-front.png`,
                 state: ProcessingState.NotDownloaded
             });
+
+            if (backImage) {
+                ctx.queues[ProcessingState.NotDownloaded].cards.push({
+                    id: key,
+                    face: 'back',
+                    group,
+                    scryfallUrl: backImage,
+                    path: `${key}-${index}-back.png`,
+                    state: ProcessingState.NotDownloaded
+                });
+            }
         }
     }
 
-    order.states.forEach(item => {
-        if (item.state === ProcessingState.NotDownloaded) return;
-        ctx.queues[item.state].cards.push(item);
-    });
+    // States saved before the foil split have no group; they belong to the order's single output.
+    const legacyGroup: FinishGroup = order.foilMode === 'all' ? 'foil' : 'nonfoil';
+    const restored = order.states
+        .filter(item => item.state !== ProcessingState.NotDownloaded)
+        .map(item => ({ ...item, group: item.group ?? legacyGroup }));
 
-    const restoredIds = order.states.map(it => it.id);
-    ctx.queues[ProcessingState.NotDownloaded].cards = ctx.queues[ProcessingState.NotDownloaded].cards.filter(x => !restoredIds.includes(x.id));
+    restored.forEach(item => ctx.queues[item.state].cards.push(item));
+
+    ctx.queues[ProcessingState.NotDownloaded].cards = ctx.queues[ProcessingState.NotDownloaded].cards
+        .filter(x => !restored.some(it => it.id === x.id && it.group === x.group && it.face === x.face));
 
     ctx.stats = {
         total: Object.values(ctx.queues).map(x => x.cards.length).reduce((acc, val) => acc + val, 0),
@@ -277,7 +294,7 @@ function enqueueCards(ctx: Context, order: Order) {
     };
 }
 
-function createPipelineTasks(cardsDir: string, profile: ProcessingProfile): ListrTask[] {
+function createPipelineTasks(cardsDirFor: (group: FinishGroup) => string, profile: ProcessingProfile): ListrTask[] {
     return [
         pipelineStage({
             title: 'Downloading card images',
@@ -285,7 +302,7 @@ function createPipelineTasks(cardsDir: string, profile: ProcessingProfile): List
             nextState: ProcessingState.Downloaded,
             statKey: 'downloaded',
             handler: async (_ctx, item) => {
-                await downloadScryfallImage(item.scryfallUrl, path.join(cardsDir, item.path));
+                await downloadScryfallImage(item.scryfallUrl, path.join(cardsDirFor(item.group), item.path));
             }
         }),
         pipelineStage({
@@ -296,7 +313,7 @@ function createPipelineTasks(cardsDir: string, profile: ProcessingProfile): List
             statKey: 'postProcessed',
             handler: async (ctx, item) => {
                 const card = ctx.cards[item.id]!;
-                await postProcessImage(path.join(cardsDir, item.path), card, item.face, profile.postProcessing);
+                await postProcessImage(path.join(cardsDirFor(item.group), item.path), card, item.face, profile.postProcessing);
             }
         }),
         pipelineStage({
@@ -307,7 +324,7 @@ function createPipelineTasks(cardsDir: string, profile: ProcessingProfile): List
             statKey: 'upscaled',
             skip: !profile.upscaling.enabled,
             handler: async (_ctx, item) => {
-                await upscaleImage(path.join(cardsDir, item.path), profile.postProcessing, profile.upscaling);
+                await upscaleImage(path.join(cardsDirFor(item.group), item.path), profile.postProcessing, profile.upscaling);
             }
         }),
         pipelineStage({
@@ -318,8 +335,8 @@ function createPipelineTasks(cardsDir: string, profile: ProcessingProfile): List
             statKey: 'converted',
             handler: async (_ctx, item) => {
                 const jpegFileName = toJpegName(item.path);
-                const pngPath = path.join(cardsDir, item.path);
-                const jpegPath = path.join(cardsDir, jpegFileName);
+                const pngPath = path.join(cardsDirFor(item.group), item.path);
+                const jpegPath = path.join(cardsDirFor(item.group), jpegFileName);
 
                 await sharp(pngPath).jpeg({ quality: 100 }).toFile(jpegPath);
                 await unlink(pngPath);
@@ -397,8 +414,19 @@ function writeMpcXml(order: Order, mainDir: string): ListrTask {
 
             const cardsToOrder = Object.values(ctx.decks).map(x => x.cards).reduce((acc, val) => [...acc, ...val], []);
             const processedItems = Object.values(ctx.queues).map(x => x.cards).reduce((acc, val) => [...acc, ...val], []);
-            const xml = createMpcAutofillOrder(order, processedItems, cardsToOrder);
-            await writeFile(path.join(mainDir, 'cards.xml'), xml);
+
+            for (const group of ['foil', 'nonfoil'] as const) {
+                const cards = cardsToOrder.filter(card => finishGroup(card, order.foilMode) === group);
+                if (cards.length === 0) continue;
+
+                const dir = groupDir(mainDir, group, order.foilMode);
+                const xml = createMpcAutofillOrder(order, processedItems.filter((item: CardQueueItem) => item.group === group), cards, group === 'foil');
+                await writeFile(path.join(dir, 'cards.xml'), xml);
+            }
         }
     };
+}
+
+function groupDir(mainDir: string, group: FinishGroup, foilMode: FoilMode) {
+    return foilMode === 'split' ? path.join(mainDir, group) : mainDir;
 }

@@ -1,7 +1,7 @@
 import { toXML } from "jstoxml";
-import type { Order } from "../config/orderConfigManager.js";
+import type { FoilMode, Order } from "../config/orderConfigManager.js";
 import type { MoxfieldCard, MoxfieldCardPrintingData } from "../clients/moxfield.js";
-import type { CardQueueItem } from "../pipeline/types.js";
+import type { CardQueueItem, FinishGroup } from "../pipeline/types.js";
 
 export const BRACKETS = [18, 36, 55, 72, 90, 108, 126, 144, 162, 180, 198, 216, 234, 396, 504, 612];
 
@@ -22,6 +22,11 @@ export const CARD_STOCK_FOIL_POSSIBLE = {
 };
 
 export const DEFAULT_CARD_STOCK = S30;
+
+export function finishGroup(card: MoxfieldCardPrintingData, foilMode: FoilMode): FinishGroup {
+    if (foilMode === 'split') return card.finish === 'foil' ? 'foil' : 'nonfoil';
+    return foilMode === 'all' ? 'foil' : 'nonfoil';
+}
 
 interface MpcAutofillOrder {
     details: {
@@ -52,7 +57,7 @@ export function findBracket(sum: number) {
     return BRACKETS.find(bracket => sum <= bracket);
 }
 
-export function createMpcAutofillOrder(order: Order, items: CardQueueItem[], cards: MoxfieldCardPrintingData[]) {
+export function createMpcAutofillOrder(order: Order, items: CardQueueItem[], cards: MoxfieldCardPrintingData[], foil: boolean) {
     const quantity = cards.reduce((acc, card) => acc + card.quantity, 0);
     const bracket = findBracket(quantity) ?? BRACKETS[BRACKETS.length - 1]!;
 
@@ -119,7 +124,7 @@ export function createMpcAutofillOrder(order: Order, items: CardQueueItem[], car
             quantity: quantity,
             bracket: bracket,
             stock: order.cardStock,
-            foil: order.foil
+            foil
         },
         fronts,
         backs,

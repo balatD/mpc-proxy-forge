@@ -195,11 +195,16 @@ async function runUpdateOrder(order: Order) {
             default: order.cardStock
         },
         {
-            type: 'confirm',
-            name: 'foil',
+            type: 'select',
+            name: 'foilMode',
             message: 'Foil?',
+            choices: [
+                { name: 'No foil', value: 'none' },
+                { name: 'All foil', value: 'all' },
+                { name: 'Split by Moxfield finish (separate foil and non-foil orders)', value: 'split' }
+            ],
             when: (answers) => CARD_STOCK_FOIL_POSSIBLE[answers.cardStock as (typeof CARD_STOCKS)[number]],
-            default: order.foil
+            default: order.foilMode
         },
         {
             type: 'input',
@@ -270,7 +275,7 @@ async function runUpdateOrder(order: Order) {
         ...order,
         profile: processingProfile,
         cardStock: answers.cardStock,
-        foil: CARD_STOCK_FOIL_POSSIBLE[answers.cardStock as (typeof CARD_STOCKS)[number]] && answers.foil,
+        foilMode: CARD_STOCK_FOIL_POSSIBLE[answers.cardStock as (typeof CARD_STOCKS)[number]] ? answers.foilMode : 'none',
         cardBack: answers.cardBack,
         decks
     };

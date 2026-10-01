@@ -5,11 +5,13 @@ import { type CARD_STOCKS, DEFAULT_CARD_STOCK } from "../output/mpcAutofill.js";
 import type { CardQueueItem } from "../pipeline/types.js";
 import { type ProcessingProfile, DefaultProfile } from "./processingProfileManager.js";
 
+export type FoilMode = 'none' | 'all' | 'split';
+
 export interface Order {
     name: string;
     profile: ProcessingProfile;
     cardStock: (typeof CARD_STOCKS)[number],
-    foil: boolean,
+    foilMode: FoilMode,
     decks: DeckConfig[];
     cardBack: string;
     states: CardQueueItem[];
@@ -39,7 +41,7 @@ export const DefaultOrder: Order = {
     name: 'unnamed',
     profile: DefaultProfile,
     cardStock: DEFAULT_CARD_STOCK,
-    foil: false,
+    foilMode: 'none',
     cardBack: '1LrVX0pUcye9n_0RtaDNVl2xPrQgn7CYf',
     decks: [],
     states: []
@@ -55,8 +57,8 @@ export async function loadOrders(): Promise<Order[]> {
     for (const file of files) {
         const filePath = path.join(ORDER_CONFIG_PATHS, file);
         const data = await fs.readFile(filePath, 'utf-8');
-        const config = JSON.parse(data);
-        configs.push({ ...DefaultOrder, ...config });
+        const { foil, ...config } = JSON.parse(data);
+        configs.push({ ...DefaultOrder, ...config, foilMode: config.foilMode ?? (foil ? 'all' : 'none') });
     }
 
     return configs.sort((a, b) => a.name.localeCompare(b.name));
