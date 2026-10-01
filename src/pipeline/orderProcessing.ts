@@ -7,16 +7,15 @@ import {
     type MoxfieldCardPrintingData,
     type MoxfieldDeck
 } from "../clients/moxfield.js";
-import type { ProcessingProfile } from "../config/processingProfileManager.js";
+import { DefaultProfile, type ProcessingProfile } from "../config/processingProfileManager.js";
 import { ui } from "../ui/theme.js";
 import chalk from "chalk";
 import { downloadScryfallImage, findScryfallCard, type ScryfallCard } from "../clients/scryfall.js";
 import path from "node:path";
 import { upscaleImage } from "./upscayl.js";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
-import { postProcessImage } from "./postProcessing.js";
+import { applyPrintCompensation, postProcessImage } from "./postProcessing.js";
 import { createMpcAutofillOrder, finishGroup } from "../output/mpcAutofill.js";
-import sharp from "sharp";
 import { confirmDialog } from "../utils/dialog.js";
 
 interface Context {
@@ -338,7 +337,9 @@ function createPipelineTasks(cardsDirFor: (group: FinishGroup) => string, profil
                 const pngPath = path.join(cardsDirFor(item.group), item.path);
                 const jpegPath = path.join(cardsDirFor(item.group), jpegFileName);
 
-                await sharp(pngPath).jpeg({ quality: 100 }).toFile(jpegPath);
+                const colorCorrection = profile.postProcessing.colorCorrection ?? DefaultProfile.postProcessing.colorCorrection;
+                const image = await applyPrintCompensation(pngPath, colorCorrection[item.group]);
+                await image.jpeg({ quality: 100 }).toFile(jpegPath);
                 await unlink(pngPath);
                 item.path = jpegFileName;
             }

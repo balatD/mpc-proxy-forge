@@ -1,4 +1,4 @@
-import { DefaultProfile, type PostProcessingProfile } from "../config/processingProfileManager.js";
+import { type ColorAdjust, DefaultProfile, type PostProcessingProfile } from "../config/processingProfileManager.js";
 import { renameWithRetry } from "../utils/fs.js";
 import type { ScryfallCard } from "../clients/scryfall.js";
 import sharp, { type Sharp } from "sharp";
@@ -51,6 +51,20 @@ export async function postProcessImage(filePath: string, card: {
 
     await sharp(buffer).png().toFile(tmpFilePath);
     await renameWithRetry(tmpFilePath, filePath);
+}
+
+// Counteracts the darker, less saturated look of MPC prints. sharp's gamma() only applies around resizing, so the
+// midtone lift is done with a lookup table on the raw pixels.
+export async function applyPrintCompensation(input: string | Buffer, adjust: ColorAdjust): Promise<Sharp> {
+    const { data, info } = await sharp(input).flatten().raw().toBuffer({ resolveWithObject: true });
+
+    const lut = Array.from({ length: 256 }, (_, value) => Math.round(255 * (value / 255) ** (1 / adjust.gamma)));
+    for (let i = 0; i < data.length; i++) {
+        data[i] = lut[data[i]!]!;
+    }
+
+    return sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } })
+        .modulate({ brightness: adjust.brightness, saturation: adjust.saturation });
 }
 
 async function applyBleed(buffer: Buffer, config: PostProcessingProfile, scryfallCard: ScryfallCard) {

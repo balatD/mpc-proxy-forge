@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { exists } from "../utils/fs.js";
+import type { FinishGroup } from "../pipeline/types.js";
 
 export interface ProcessingProfile {
     name: string;
@@ -17,7 +18,14 @@ export interface PostProcessingProfile {
     bleedWidth: number,
     borderCrop: number,
     copyrightBehavior: 'keep' | 'blur' | 'proxy',
-    blurStrength: number
+    blurStrength: number,
+    colorCorrection: Record<FinishGroup, ColorAdjust>
+}
+
+export interface ColorAdjust {
+    gamma: number,
+    saturation: number,
+    brightness: number
 }
 
 export interface UpscaylSettings {
@@ -46,6 +54,10 @@ export const DefaultProfile: ProcessingProfile = {
         borderCrop: 0.005,
         copyrightBehavior: 'proxy',
         blurStrength: 10,
+        colorCorrection: {
+            nonfoil: { gamma: 1.1, saturation: 1.1, brightness: 1 },
+            foil: { gamma: 1.2, saturation: 1.2, brightness: 1.05 }
+        }
     },
     upscaling: {
         enabled: true,

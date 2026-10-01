@@ -13,6 +13,7 @@ import { downloadUpscaylBinary, downloadUpscaylModels, getUpscaylModels } from "
 import * as os from "node:os";
 import { Listr } from "listr2";
 import { getUniqueName } from "../utils/getUniqueName.js";
+import type { FinishGroup } from "../pipeline/types.js";
 
 export async function runProfileMenu() {
     console.clear();
@@ -259,6 +260,27 @@ async function runUpdateProfile(profile: ProcessingProfile) {
 
     profile.postProcessing.copyrightBehavior = copyrightChoices.copyrightBehavior;
     profile.postProcessing.blurStrength = copyrightChoices.blurStrength || profile.postProcessing.blurStrength;
+
+    console.log(ui.subtitle('Print Colour Compensation'));
+    console.log('MPC prints come out darker and less saturated than on screen, foils even more so.');
+    console.log('Values above 1 brighten midtones (gamma), boost saturation or overall brightness. 1 leaves the image unchanged.\n');
+
+    const colorCorrection = profile.postProcessing.colorCorrection ?? DefaultProfile.postProcessing.colorCorrection;
+    const colorPrompts = (['nonfoil', 'foil'] as const).flatMap(group => (['gamma', 'saturation', 'brightness'] as const).map(key => ({
+        type: 'input' as const,
+        name: `${group}_${key}`,
+        message: `${group === 'foil' ? 'Foil' : 'Non-foil'} ${key}:`,
+        default: String(colorCorrection[group][key]),
+        validate: (value: string) => validateNumberFromString(value, key, 0.1, 3)
+    })));
+    const colorChoices = await inquirer.prompt(colorPrompts);
+
+    const readAdjust = (group: FinishGroup) => ({
+        gamma: parseFloat(colorChoices[`${group}_gamma`]),
+        saturation: parseFloat(colorChoices[`${group}_saturation`]),
+        brightness: parseFloat(colorChoices[`${group}_brightness`])
+    });
+    profile.postProcessing.colorCorrection = { nonfoil: readAdjust('nonfoil'), foil: readAdjust('foil') };
 
     await saveProcessingProfile(profile);
 
