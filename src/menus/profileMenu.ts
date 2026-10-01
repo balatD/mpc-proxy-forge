@@ -169,6 +169,20 @@ async function runUpdateProfile(profile: ProcessingProfile) {
 
     profile.upscaling = await runUpscaylSettings(profile.upscaling);
 
+    console.log(ui.subtitle('MPC Autofill'));
+    console.log('After processing, MPC Autofill can be started for each order right away.\n');
+
+    const autofill = await inquirer.prompt([
+        {
+            type: 'input',
+            name: 'binary',
+            message: 'Path to the MPC Autofill binary:',
+            default: profile.autofillBinary
+        }
+    ]);
+
+    profile.autofillBinary = autofill.binary;
+
     console.log(ui.subtitle('Post-Processing'));
     console.log('These values will be used to help make images look better on the proxy.');
     console.log('If unsure, leave these values as-is.\n');

@@ -9,6 +9,7 @@ export interface ProcessingProfile {
     playwrightChannel: PlaywrightChannel,
     postProcessing: PostProcessingProfile,
     upscaling: UpscaylSettings,
+    autofillBinary: string,
 }
 
 export interface PostProcessingProfile {
@@ -62,7 +63,8 @@ export const DefaultProfile: ProcessingProfile = {
     upscaling: {
         enabled: true,
         model: 'upscayl-standard-4x'
-    }
+    },
+    autofillBinary: './autofill-macos-arm.command'
 };
 
 const PROCESSING_PROFILE_PATH = path.join(process.cwd(), 'config', 'profiles');

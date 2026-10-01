@@ -13,10 +13,12 @@ import chalk from "chalk";
 import { downloadScryfallImage, findScryfallCard, type ScryfallCard } from "../clients/scryfall.js";
 import path from "node:path";
 import { upscaleImage } from "./upscayl.js";
+import { exists } from "../utils/fs.js";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { applyPrintCompensation, postProcessImage } from "./postProcessing.js";
 import { createMpcAutofillOrder, finishGroup } from "../output/mpcAutofill.js";
 import { confirmDialog } from "../utils/dialog.js";
+import { spawn } from "node:child_process";
 
 interface Context {
     decks: {
@@ -41,6 +43,7 @@ interface Context {
         converted: number
     },
     missingCards: Record<string, string>,
+    mpcOrders: { group: FinishGroup, dir: string, quantity: number }[],
     aborted: boolean
 }
 
@@ -107,6 +110,7 @@ export async function processOrder(order: Order) {
     });
 
     await saveOrder(order);
+    await offerMpcAutofill(processingProfile, context.mpcOrders);
 
     if (await confirmDialog('\nDo you want to exit the application?', true)) {
         process.exit(0);
@@ -132,6 +136,7 @@ export function createContext(): Context {
             converted: 0
         },
         missingCards: {},
+        mpcOrders: [],
         aborted: false
     };
 }
@@ -423,6 +428,8 @@ function writeMpcXml(order: Order, mainDir: string): ListrTask {
                 const dir = groupDir(mainDir, group, order.foilMode);
                 const xml = createMpcAutofillOrder(order, processedItems.filter((item: CardQueueItem) => item.group === group), cards, group === 'foil');
                 await writeFile(path.join(dir, 'cards.xml'), xml);
+
+                ctx.mpcOrders.push({ group, dir, quantity: cards.reduce((acc, card) => acc + card.quantity, 0) });
             }
         }
     };
@@ -430,4 +437,25 @@ function writeMpcXml(order: Order, mainDir: string): ListrTask {
 
 function groupDir(mainDir: string, group: FinishGroup, foilMode: FoilMode) {
     return foilMode === 'split' ? path.join(mainDir, group) : mainDir;
+}
+
+async function offerMpcAutofill(profile: ProcessingProfile, orders: Context['mpcOrders']) {
+    if (orders.length === 0) return;
+
+    const binary = path.resolve(profile.autofillBinary ?? DefaultProfile.autofillBinary);
+    if (!await exists(binary)) {
+        console.log(ui.information(`MPC Autofill was not found at ${binary}. Set its path in the processing profile to start it from here.`));
+        return;
+    }
+
+    for (const { group, dir, quantity } of orders) {
+        const label = group === 'foil' ? 'foil' : 'non-foil';
+        if (!await confirmDialog(`\nStart MPC Autofill for the ${label} order (${quantity} cards)?`, true)) continue;
+
+        await new Promise<void>((resolve, reject) => {
+            spawn(binary, ['--directory', path.resolve(dir)], { cwd: dir, stdio: 'inherit' })
+                .on('error', reject)
+                .on('exit', () => resolve());
+        });
+    }
 }
